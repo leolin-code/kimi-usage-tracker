@@ -1,101 +1,146 @@
 # Kimi Usage Tracker
 
-An unofficial, local-only desktop dashboard for Kimi Code token and cache usage.
+[中文](#中文) · [English](#english)
 
-Kimi Usage Tracker reads the normalized `usage.record` entries already written by Kimi Code. It does not proxy requests, modify Kimi Code configuration, read prompt text, or upload usage data.
+An unofficial, local-only desktop dashboard for Kimi Code token, cache, model, and cost usage.
 
-## Features
+一款非官方、本地运行的 Kimi Code Token、缓存、模型与费用统计工具。
 
-- Input, output, cache-read, and cache-creation token totals
-- Cache hit rate, daily trend, per-model totals, and per-request estimated costs
-- Official Kimi API Platform pricing for supported pay-as-you-go models
-- Model alias resolution for `config.toml` entries and common `KIMI_MODEL_NAME` values such as `k3`
-- Explicitly leaves `kimi-for-coding` unpriced because it is a subscription/quota product
-- Automatic discovery of `~/.kimi-code` and support for `KIMI_CODE_HOME`
-- A directory picker for alternate Kimi Code data roots
-- Bounded line parsing for large JSONL journals
-- Safety limits for scanned lines, model groups, configuration, and session logs
+![Kimi Usage Tracker dashboard / Kimi Usage Tracker 使用界面](docs/images/dashboard.png)
 
-## macOS Preview
+## 中文
 
-The first preview targets Apple Silicon Macs running macOS 11 or later.
+Kimi Usage Tracker 读取 Kimi Code 已经写入本机的 `usage.record` 记录，并在本地生成统计结果。它不会代理请求、修改 Kimi 配置、读取对话正文或上传用量数据。
 
-1. Download `Kimi-Usage-Tracker-macOS-arm64.zip` from the [latest release](https://github.com/leolin-code/kimi-usage-tracker/releases/latest).
-2. Extract the archive.
-3. Open `Kimi Usage Tracker.app`.
+### 功能
 
-The preview build is not notarized. If macOS blocks the first launch, Control-click the app, choose **Open**, and confirm once.
+- 统计普通输入、模型输出、缓存读取和缓存创建 Token
+- 查看今天、7 天、30 天和全部用量
+- 查看每日趋势、模型统计、缓存命中率和最近请求
+- 按官方 Kimi API Platform 价格估算每条请求与模型费用
+- 兼容 `config.toml` 模型别名、`KIMI_MODEL_NAME` 和 `__kimi_env_model__`
+- 自动读取 `~/.kimi-code`，也可以手动选择其他数据目录
 
-After opening the app, it automatically reads `~/.kimi-code`. Use the folder button in the top-right corner only when your Kimi Code data is stored elsewhere.
+### macOS 使用
 
-## Windows
+首个版本支持 Apple Silicon Mac，要求 macOS 11 或更高版本。
 
-There is no prebuilt Windows download in the first release. Windows users can build a portable `.exe` by following [docs/build-windows.md](docs/build-windows.md). No installer is required after the build.
+1. 从 [最新版本](https://github.com/leolin-code/kimi-usage-tracker/releases/latest) 下载 `Kimi-Usage-Tracker-macOS-arm64.zip`。
+2. 解压后打开 `Kimi Usage Tracker.app`。
+3. 程序会自动读取 `~/.kimi-code` 并显示统计结果。
 
-## Data Source
+当前应用使用临时签名，尚未经过 Apple 公证。如果 macOS 阻止首次启动，请按住 Control 点击应用，选择“打开”，然后确认一次。
 
-The app scans:
+如果 Kimi 数据不在默认目录，点击右上角的文件夹按钮选择对应目录。点击刷新按钮可以重新扫描数据。
 
-```text
-$KIMI_CODE_HOME/sessions/*/*/agents/*/wire.jsonl
-$KIMI_CODE_HOME/sessions/*/*/logs/kimi-code.log*
-```
+### Windows
 
-When `KIMI_CODE_HOME` is unset, it defaults to:
+首个版本暂不提供 Windows 安装包。Windows 10/11 用户可以按照 [Windows 构建教程](docs/build-windows.md) 生成免安装的 `.exe` 文件。
+
+### 数据与隐私
+
+默认扫描目录：
 
 ```text
 macOS/Linux: ~/.kimi-code
 Windows:     %USERPROFILE%\.kimi-code
 ```
 
-Only records whose exact type is `usage.record` are aggregated. Session logs are consulted only when Kimi Code records its reserved `__kimi_env_model__` alias; the app extracts the corresponding `model` / `modelAlias` fields from bounded `llm config` lines. Prompt messages, tool arguments, code, credentials, and response text are ignored.
+工具只统计 `usage.record` 中的模型名、时间和 Token 数量。为了识别环境变量模型，它还会读取受限范围内的安全模型映射。提示词、回复正文、代码、API Key 和 Provider 凭据不会显示或记录。
 
-Model names are normalized before grouping and pricing. The app reads only the `model` field under `[models."<alias>"]` from a bounded `config.toml`, so a recorded alias such as `my-k3` can be grouped under `kimi-k3`. Environment-defined models are resolved from their per-session model mapping because Kimi Code does not persist `KIMI_MODEL_NAME` into `config.toml`. Provider keys and configuration contents are never displayed or logged.
+所有扫描和计算都在本机完成。当前版本不会发起应用级网络请求。
 
-## Pricing
+### 费用说明
 
-Built-in prices come from the official Kimi API Platform documentation and use CNY per 1,000,000 tokens. See [docs/pricing.md](docs/pricing.md) for the current table, source URLs, and product distinction.
+内置价格来自 Kimi API Platform 官方文档，单位为人民币/百万 Token。详细价格、来源与计算方式见 [计价说明](docs/pricing.md)。
 
-Costs are estimates for public pay-as-you-go model IDs. The dashboard shows both model totals and an estimate for each recent request. Provider invoices remain the source of truth.
+`kimi-for-coding` 属于订阅或额度产品，因此不会套用公开 API Token 单价。界面中的金额仅为估算，最终费用以服务商账单为准。
 
-## Development
+### 本地开发
 
-Prerequisites:
-
-- Node.js 22 or later
-- Rust stable
-- Xcode Command Line Tools on macOS
-
-Run the desktop app:
+需要 Node.js 22、Rust stable；macOS 还需要 Xcode Command Line Tools。
 
 ```bash
 npm install
 npm run tauri -- dev
 ```
 
-Run tests:
+运行检查：
 
 ```bash
 npm test
 npm run build
-cd src-tauri && cargo test
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Contribution instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-Build the macOS portable archive:
+## English
+
+Kimi Usage Tracker reads the `usage.record` entries already written by Kimi Code and builds the dashboard locally. It does not proxy requests, modify Kimi configuration, read conversation content, or upload usage data.
+
+### Features
+
+- Track uncached input, model output, cache-read, and cache-creation tokens
+- Switch between today, 7 days, 30 days, and all-time usage
+- View daily trends, model totals, cache hit rate, and recent requests
+- Estimate per-request and per-model costs using official Kimi API Platform prices
+- Resolve `config.toml` aliases, `KIMI_MODEL_NAME`, and `__kimi_env_model__`
+- Discover `~/.kimi-code` automatically or open another data directory
+
+### macOS
+
+The first release supports Apple Silicon Macs running macOS 11 or later.
+
+1. Download `Kimi-Usage-Tracker-macOS-arm64.zip` from the [latest release](https://github.com/leolin-code/kimi-usage-tracker/releases/latest).
+2. Extract the archive and open `Kimi Usage Tracker.app`.
+3. The dashboard automatically reads `~/.kimi-code`.
+
+The current app uses ad-hoc signing and is not Apple-notarized. If macOS blocks the first launch, Control-click the app, choose **Open**, and confirm once.
+
+Use the folder button in the top-right corner when your Kimi data is stored elsewhere. Use the refresh button to scan again.
+
+### Windows
+
+The first release does not include a prebuilt Windows download. Windows 10/11 users can follow the [Windows build guide](docs/build-windows.md) to produce a portable `.exe` with no installer.
+
+### Data and privacy
+
+Default data directories:
+
+```text
+macOS/Linux: ~/.kimi-code
+Windows:     %USERPROFILE%\.kimi-code
+```
+
+The app aggregates only model names, timestamps, and token counts from `usage.record`. It also reads a bounded safe model mapping when an environment-defined model must be resolved. Prompt text, response content, code, API keys, and provider credentials are never displayed or logged.
+
+Scanning and calculation stay on the local machine. The current release makes no application-level network requests.
+
+### Pricing
+
+Built-in rates come from the official Kimi API Platform documentation and use CNY per 1,000,000 tokens. See [pricing details](docs/pricing.md) for the rates, sources, and formula.
+
+`kimi-for-coding` is a subscription or quota product, so the app does not apply public API token rates to it. Displayed costs are estimates; provider invoices remain the source of truth.
+
+### Development
+
+Requirements: Node.js 22, Rust stable, and Xcode Command Line Tools on macOS.
 
 ```bash
-./scripts/package-macos.sh
+npm install
+npm run tauri -- dev
 ```
 
-## Privacy
+Run checks:
 
-Kimi Usage Tracker performs usage scanning and aggregation locally. The current release makes no application-level network requests. Official prices are compiled into the binary with their source URLs and verification date.
+```bash
+npm test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+```
 
-## Status
-
-This is an early macOS preview. Windows portable packaging and incremental on-disk indexing are planned after the scanner and dashboard have been validated with real Kimi Code sessions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## License
 
