@@ -42,7 +42,7 @@ function App() {
   const initialized = useRef(false);
 
   const loadUsage = useCallback(async (targetHome: string, days: RangeDays) => {
-    if (!targetHome) return;
+    if (!targetHome) return false;
     setLoading(true);
     setError("");
     try {
@@ -52,8 +52,10 @@ function App() {
       });
       setReport(next);
       localStorage.setItem("kimi-usage-home", targetHome);
+      return true;
     } catch (reason) {
       setError(String(reason));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -64,9 +66,14 @@ function App() {
     initialized.current = true;
     void (async () => {
       const saved = localStorage.getItem("kimi-usage-home")?.trim();
-      const initialHome = saved || (await invoke<string>("default_kimi_home"));
-      setHome(initialHome);
-      await loadUsage(initialHome, rangeDays);
+      if (saved) {
+        setHome(saved);
+        if (await loadUsage(saved, rangeDays)) return;
+      }
+
+      const detected = await invoke<string>("default_kimi_home");
+      setHome(detected);
+      await loadUsage(detected, rangeDays);
     })().catch((reason) => {
       setError(String(reason));
       setLoading(false);

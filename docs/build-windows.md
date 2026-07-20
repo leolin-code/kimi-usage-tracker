@@ -1,6 +1,8 @@
 # Build on Windows
 
-Kimi Usage Tracker does not require an installer. You can build a portable executable on Windows 10 or Windows 11.
+Kimi Usage Tracker does not require an installer. Download `Kimi-Usage-Tracker-Windows-x64.exe` from the [Edge release](https://github.com/leolin-code/kimi-usage-tracker/releases/tag/edge), or build it locally on Windows 10 or Windows 11.
+
+The Edge release is rebuilt automatically after every successful push to `main`. Windows may show a SmartScreen warning because the executable is not code-signed. Check that its SHA-256 matches `SHA256SUMS.txt`, then choose **More info** and **Run anyway** if you trust the download.
 
 ## Requirements
 
@@ -37,4 +39,4 @@ You can move that `.exe` to another folder or computer. The target computer must
 npm run tauri -- dev
 ```
 
-The application reads `%USERPROFILE%\.kimi-code` by default. If your Kimi Code data is elsewhere, choose that directory with the folder button inside the app.
+The application checks `KIMI_CODE_HOME`, `%HOME%\.kimi-code`, and `%USERPROFILE%\.kimi-code` automatically. If a previously selected directory no longer works, it falls back to the detected default. You can always choose another directory with the folder button inside the app.

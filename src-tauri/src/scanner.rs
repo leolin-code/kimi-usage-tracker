@@ -300,8 +300,35 @@ pub fn default_kimi_home() -> Option<PathBuf> {
         Some(value) if !value.is_empty() => return Some(PathBuf::from(value)),
         _ => {}
     }
-    let user_home = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(user_home).join(".kimi-code"))
+    select_default_kimi_home(
+        [env::var_os("HOME"), env::var_os("USERPROFILE")]
+            .into_iter()
+            .flatten()
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from),
+    )
+}
+
+fn select_default_kimi_home(homes: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut first = None;
+    let mut existing = None;
+
+    for home in homes {
+        let candidate = home.join(".kimi-code");
+        if !seen.insert(candidate.clone()) {
+            continue;
+        }
+        first.get_or_insert_with(|| candidate.clone());
+        if candidate.join("sessions").is_dir() {
+            return Some(candidate);
+        }
+        if existing.is_none() && candidate.is_dir() {
+            existing = Some(candidate);
+        }
+    }
+
+    existing.or(first)
 }
 
 pub fn scan(home: Option<&str>, days: Option<u32>) -> Result<UsageReport, ScanError> {
@@ -789,6 +816,33 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn default_home_prefers_the_candidate_with_kimi_sessions() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let home = temporary.path().join("home");
+        let user_profile = temporary.path().join("user-profile");
+        fs::create_dir_all(home.join(".kimi-code")).expect("home Kimi directory");
+        fs::create_dir_all(user_profile.join(".kimi-code/sessions"))
+            .expect("profile Kimi sessions");
+
+        assert_eq!(
+            select_default_kimi_home([home, user_profile.clone()]),
+            Some(user_profile.join(".kimi-code"))
+        );
+    }
+
+    #[test]
+    fn default_home_falls_back_to_the_first_user_home() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let home = temporary.path().join("home");
+        let user_profile = temporary.path().join("user-profile");
+
+        assert_eq!(
+            select_default_kimi_home([home.clone(), user_profile]),
+            Some(home.join(".kimi-code"))
+        );
+    }
 
     #[test]
     fn scans_only_usage_records_and_separates_cache_reads() {

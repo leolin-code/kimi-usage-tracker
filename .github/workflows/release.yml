@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_run' && 'edge' || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - run: npm test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build universal macOS DMG
+        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+      - name: Collect macOS asset
+        shell: bash
+        run: |
+          mkdir -p release
+          dmg="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -type f -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          cp "$dmg" release/Kimi-Usage-Tracker-macOS-universal.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release/Kimi-Usage-Tracker-macOS-universal.dmg
+          if-no-files-found: error
+
+  build-windows:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build portable Windows executable
+        run: npm run tauri -- build --no-bundle
+      - name: Collect Windows asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item src-tauri\target\release\kimi-usage-tracker.exe release\Kimi-Usage-Tracker-Windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/Kimi-Usage-Tracker-Windows-x64.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create checksums
+        run: |
+          cd release-assets
+          sha256sum *.dmg *.exe > SHA256SUMS.txt
+      - name: Select release channel
+        id: release
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "tag=edge" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Move Edge tag
+        if: steps.release.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        shell: bash
+        run: |
+          if gh api "repos/$REPOSITORY/git/ref/tags/edge" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/$REPOSITORY/git/refs/tags/edge" -f sha="$SOURCE_SHA" -F force=true
+          else
+            gh api --method POST "repos/$REPOSITORY/git/refs" -f ref="refs/tags/edge" -f sha="$SOURCE_SHA"
+          fi
+      - name: Publish Edge release
+        if: steps.release.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$REPOSITORY" --title "Edge build" --prerelease --notes "Automatically rebuilt from main after CI passes. Assets are replaced on every successful push."
+          else
+            gh release create "$TAG" --repo "$REPOSITORY" --title "Edge build" --prerelease --notes "Automatically rebuilt from main after CI passes. Assets are replaced on every successful push."
+          fi
+          gh release upload "$TAG" release-assets/* --repo "$REPOSITORY" --clobber
+      - name: Publish stable release
+        if: steps.release.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPOSITORY" --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" release-assets/* --repo "$REPOSITORY" --clobber
