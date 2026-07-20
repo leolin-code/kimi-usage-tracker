@@ -481,7 +481,9 @@ fn consume_record(
         cost_cny: cost_nanos.map(pricing::format_cny_nanos),
     });
     if state.recent.len() > MAX_RECENT_RECORDS {
-        state.recent.sort_unstable_by(|a, b| b.time.cmp(&a.time));
+        state
+            .recent
+            .sort_unstable_by_key(|record| std::cmp::Reverse(record.time));
         state.recent.truncate(MAX_RECENT_RECORDS);
     }
 }
@@ -493,7 +495,9 @@ fn build_report(
     scanned_files: usize,
     mut state: ScanState,
 ) -> UsageReport {
-    state.recent.sort_unstable_by(|a, b| b.time.cmp(&a.time));
+    state
+        .recent
+        .sort_unstable_by_key(|record| std::cmp::Reverse(record.time));
 
     let mut daily = state
         .daily
