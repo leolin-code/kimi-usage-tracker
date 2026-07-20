@@ -4,6 +4,7 @@
 
 - Detect Kimi Code data across `KIMI_CODE_HOME`, `HOME`, and `USERPROFILE`, and recover from stale saved paths.
 - Publish a raw Windows `.exe` and a universal macOS `.dmg` to the rolling Edge release after every successful `main` build.
+- Build the Windows release as a desktop GUI executable without an extra console window.
 
 ## 0.1.0 - 2026-07-20
 
