@@ -86,6 +86,7 @@ jobs:
     needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v8
         with:
           path: release-assets
@@ -142,7 +143,16 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
         shell: bash
         run: |
+          version="${TAG#v}"
+          awk -v heading="## $version " '
+            index($0, heading) == 1 { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
           if ! gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$REPOSITORY" --title "$TAG" --generate-notes
+            gh release create "$TAG" --repo "$REPOSITORY" --title "$TAG" --notes-file release-notes.md
+          else
+            gh release edit "$TAG" --repo "$REPOSITORY" --title "$TAG" --notes-file release-notes.md
           fi
           gh release upload "$TAG" release-assets/* --repo "$REPOSITORY" --clobber

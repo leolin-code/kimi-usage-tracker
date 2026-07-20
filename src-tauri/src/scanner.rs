@@ -6,7 +6,7 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{Local, TimeZone};
+use chrono::{Datelike, Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
 
 use crate::pricing::{self, PricingMetadata};
@@ -17,8 +17,10 @@ const MAX_SCANNED_LINES: u64 = 1_000_000;
 const MAX_USAGE_RECORD_BYTES: usize = 256 * 1024;
 const MAX_MODEL_LENGTH: usize = 160;
 const MAX_MODEL_BUCKETS: usize = 2_048;
-const MAX_DAILY_BUCKETS: usize = 4_096;
+const MAX_SERIES_BUCKETS: usize = 4_096;
+const MAX_DIMENSION_VALUES: usize = 2_000;
 const OVERFLOW_MODEL: &str = "other-models";
+const UNSPECIFIED_SCOPE: &str = "未标注";
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_CONFIG_MODELS: usize = 2_048;
 const MAX_SESSION_LOG_BYTES: u64 = 8 * 1024 * 1024;
@@ -26,8 +28,7 @@ const MAX_SESSION_LOG_FILES: usize = 8;
 const MAX_ENV_MODEL_SESSIONS: usize = 2_048;
 const MAX_ENV_MODEL_EVENTS: usize = 100_000;
 const ENV_MODEL_ALIAS: &str = "__kimi_env_model__";
-const MAX_RECENT_RECORDS: usize = 100;
-const MAX_CHART_DAYS: usize = 120;
+const MAX_RECENT_RECORDS: usize = 1_000;
 
 #[derive(Debug)]
 pub enum ScanError {
@@ -73,6 +74,16 @@ impl TokenTotals {
         self.total = self.total.saturating_add(usage.grand_total());
     }
 
+    fn merge(&mut self, other: &TokenTotals) {
+        self.input_other = self.input_other.saturating_add(other.input_other);
+        self.output = self.output.saturating_add(other.output);
+        self.input_cache_read = self.input_cache_read.saturating_add(other.input_cache_read);
+        self.input_cache_creation = self
+            .input_cache_creation
+            .saturating_add(other.input_cache_creation);
+        self.total = self.total.saturating_add(other.total);
+    }
+
     fn input_total(&self) -> u64 {
         self.input_other
             .saturating_add(self.input_cache_read)
@@ -82,11 +93,46 @@ impl TokenTotals {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DailyUsage {
-    pub date: String,
+pub struct SeriesBucket {
+    pub start_ms: i64,
     pub requests: u64,
     pub tokens: TokenTotals,
     pub cost_cny: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DimensionValue {
+    pub value: String,
+    pub requests: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterDimensions {
+    pub models: Vec<DimensionValue>,
+    pub sessions: Vec<DimensionValue>,
+    pub agents: Vec<DimensionValue>,
+    pub scopes: Vec<DimensionValue>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComparisonSummary {
+    pub requests: u64,
+    pub sessions: u64,
+    pub tokens: TokenTotals,
+    pub cache_hit_rate: f64,
+    pub priced_cost_cny: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostSegments {
+    pub input_other: String,
+    pub cache_read: String,
+    pub cache_creation: String,
+    pub output: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +154,7 @@ pub struct RecentUsage {
     pub model: String,
     pub session_id: String,
     pub agent: String,
+    pub scope: String,
     pub tokens: TokenTotals,
     pub cost_cny: Option<String>,
 }
@@ -117,7 +164,7 @@ pub struct RecentUsage {
 pub struct UsageReport {
     pub home: String,
     pub generated_at: i64,
-    pub range_days: Option<u32>,
+    pub granularity: String,
     pub requests: u64,
     pub sessions: u64,
     pub scanned_files: u64,
@@ -130,9 +177,40 @@ pub struct UsageReport {
     pub cache_hit_rate: f64,
     pub priced_cost_cny: String,
     pub tokens: TokenTotals,
-    pub daily: Vec<DailyUsage>,
+    pub cost_segments: CostSegments,
+    pub series: Vec<SeriesBucket>,
+    pub dimensions: FilterDimensions,
+    pub comparison: Option<ComparisonSummary>,
     pub models: Vec<ModelUsage>,
     pub recent: Vec<RecentUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScanFilter {
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    pub models: Vec<String>,
+    pub sessions: Vec<String>,
+    pub agents: Vec<String>,
+    pub scopes: Vec<String>,
+    pub billing: String,
+    pub granularity: String,
+}
+
+impl Default for ScanFilter {
+    fn default() -> Self {
+        Self {
+            start_ms: None,
+            end_ms: None,
+            models: Vec::new(),
+            sessions: Vec::new(),
+            agents: Vec::new(),
+            scopes: Vec::new(),
+            billing: "all".to_string(),
+            granularity: "auto".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +220,146 @@ struct WireUsageRecord {
     model: String,
     time: Option<i64>,
     usage: RawTokenUsage,
+    #[serde(rename = "usageScope")]
+    usage_scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+enum Granularity {
+    #[default]
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+}
+
+impl Granularity {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "minute" => Some(Self::Minute),
+            "hour" => Some(Self::Hour),
+            "day" => Some(Self::Day),
+            "week" => Some(Self::Week),
+            "month" => Some(Self::Month),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Minute => "minute",
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
+
+    fn coarser(self) -> Option<Self> {
+        match self {
+            Self::Minute => Some(Self::Hour),
+            Self::Hour => Some(Self::Day),
+            Self::Day => Some(Self::Week),
+            Self::Week => Some(Self::Month),
+            Self::Month => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum BillingFilter {
+    #[default]
+    All,
+    Priced,
+    Unpriced,
+}
+
+impl BillingFilter {
+    fn parse(value: &str) -> Self {
+        match value {
+            "priced" => Self::Priced,
+            "unpriced" => Self::Unpriced,
+            _ => Self::All,
+        }
+    }
+
+    fn matches(self, priced: bool) -> bool {
+        match self {
+            Self::All => true,
+            Self::Priced => priced,
+            Self::Unpriced => !priced,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ResolvedFilter {
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
+    models: Vec<String>,
+    sessions: Vec<String>,
+    agents: Vec<String>,
+    scopes: Vec<String>,
+    billing: BillingFilter,
+    granularity: Option<Granularity>,
+}
+
+impl ResolvedFilter {
+    fn from_filter(filter: Option<ScanFilter>) -> Self {
+        let filter = filter.unwrap_or_default();
+        Self {
+            start_ms: filter.start_ms,
+            end_ms: filter.end_ms,
+            models: filter.models,
+            sessions: filter.sessions,
+            agents: filter.agents,
+            scopes: filter.scopes,
+            billing: BillingFilter::parse(&filter.billing),
+            granularity: Granularity::parse(&filter.granularity),
+        }
+    }
+
+    fn matches(&self, model: &str, session: &str, agent: &str, scope: &str, priced: bool) -> bool {
+        (self.models.is_empty() || self.models.iter().any(|value| value == model))
+            && (self.sessions.is_empty() || self.sessions.iter().any(|value| value == session))
+            && (self.agents.is_empty() || self.agents.iter().any(|value| value == agent))
+            && (self.scopes.is_empty() || self.scopes.iter().any(|value| value == scope))
+            && self.billing.matches(priced)
+    }
+
+    fn comparison_window(&self) -> Option<(i64, i64)> {
+        let (Some(start), Some(end)) = (self.start_ms, self.end_ms) else {
+            return None;
+        };
+        if end < start {
+            return None;
+        }
+        let length = end.saturating_sub(start).saturating_add(1);
+        Some((start.saturating_sub(length), start.saturating_sub(1)))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RecordWindow {
+    Main,
+    Comparison,
+    Skip,
+}
+
+fn classify_window(time: i64, filter: &ResolvedFilter) -> RecordWindow {
+    let in_main = filter.start_ms.is_none_or(|start| time >= start)
+        && filter.end_ms.is_none_or(|end| time <= end);
+    if in_main {
+        return RecordWindow::Main;
+    }
+    if let Some((comparison_start, comparison_end)) = filter.comparison_window()
+        && time >= comparison_start
+        && time <= comparison_end
+    {
+        return RecordWindow::Comparison;
+    }
+    RecordWindow::Skip
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -279,15 +497,66 @@ impl Aggregate {
             self.priced_requests = self.priced_requests.saturating_add(1);
         }
     }
+
+    fn merge(&mut self, other: &Aggregate) {
+        self.requests = self.requests.saturating_add(other.requests);
+        self.totals.merge(&other.totals);
+        self.cost_nanos = self.cost_nanos.saturating_add(other.cost_nanos);
+        self.priced_requests = self.priced_requests.saturating_add(other.priced_requests);
+    }
+}
+
+#[derive(Default)]
+struct DimensionCounts {
+    models: BTreeMap<String, u64>,
+    sessions: BTreeMap<String, u64>,
+    agents: BTreeMap<String, u64>,
+    scopes: BTreeMap<String, u64>,
+}
+
+impl DimensionCounts {
+    fn add(&mut self, model: &str, session: &str, agent: &str, scope: &str) -> bool {
+        let mut limited = false;
+        limited |= bump_dimension(&mut self.models, model);
+        limited |= bump_dimension(&mut self.sessions, session);
+        limited |= bump_dimension(&mut self.agents, agent);
+        limited |= bump_dimension(&mut self.scopes, scope);
+        limited
+    }
+}
+
+fn bump_dimension(map: &mut BTreeMap<String, u64>, value: &str) -> bool {
+    if let Some(count) = map.get_mut(value) {
+        *count = count.saturating_add(1);
+        false
+    } else if map.len() < MAX_DIMENSION_VALUES {
+        map.insert(value.to_string(), 1);
+        false
+    } else {
+        true
+    }
+}
+
+#[derive(Default)]
+struct ComparisonState {
+    aggregate: Aggregate,
+    sessions: HashSet<String>,
 }
 
 #[derive(Default)]
 struct ScanState {
     aggregate: Aggregate,
-    daily: BTreeMap<String, Aggregate>,
+    cost_segments: [i128; 4],
+    series: BTreeMap<i64, Aggregate>,
+    series_granularity: Granularity,
+    auto_granularity: bool,
+    min_time: Option<i64>,
+    max_time: Option<i64>,
     models: HashMap<String, ModelAggregate>,
     recent: Vec<RecentUsage>,
     sessions: HashSet<String>,
+    dimensions: DimensionCounts,
+    comparison: ComparisonState,
     scanned_lines: u64,
     parsed_records: u64,
     malformed_records: u64,
@@ -331,7 +600,7 @@ fn select_default_kimi_home(homes: impl IntoIterator<Item = PathBuf>) -> Option<
     existing.or(first)
 }
 
-pub fn scan(home: Option<&str>, days: Option<u32>) -> Result<UsageReport, ScanError> {
+pub fn scan(home: Option<&str>, filter: Option<ScanFilter>) -> Result<UsageReport, ScanError> {
     let home = resolve_home(home)?;
     let sessions_root = home.join("sessions");
     if !sessions_root.is_dir() {
@@ -346,20 +615,33 @@ pub fn scan(home: Option<&str>, days: Option<u32>) -> Result<UsageReport, ScanEr
     wire_files.sort_unstable();
 
     let now = now_millis();
-    let range_days = days
-        .filter(|value| *value > 0)
-        .map(|value| value.min(3_650));
-    let cutoff = cutoff_for_range(now, range_days);
-    let mut state = ScanState::default();
+    let filter = ResolvedFilter::from_filter(filter);
+    let (series_granularity, auto_granularity) = match filter.granularity {
+        Some(granularity) => (granularity, false),
+        None => {
+            let initial = match (filter.start_ms, filter.end_ms) {
+                (Some(start), Some(end)) if end >= start => {
+                    auto_granularity(end.saturating_sub(start))
+                }
+                _ => Granularity::Minute,
+            };
+            (initial, true)
+        }
+    };
+    let mut state = ScanState {
+        series_granularity,
+        auto_granularity,
+        ..ScanState::default()
+    };
     let mut resolver = ModelResolver::from_home(&home);
 
     for path in &wire_files {
-        if scan_wire_file(path, cutoff, &mut resolver, &mut state)? {
+        if scan_wire_file(path, &filter, &mut resolver, &mut state)? {
             break;
         }
     }
 
-    Ok(build_report(home, now, range_days, wire_files.len(), state))
+    Ok(build_report(home, now, &filter, wire_files.len(), state))
 }
 
 fn resolve_home(home: Option<&str>) -> Result<PathBuf, ScanError> {
@@ -412,7 +694,7 @@ fn collect_wire_files(
 
 fn scan_wire_file(
     path: &Path,
-    cutoff: Option<i64>,
+    filter: &ResolvedFilter,
     resolver: &mut ModelResolver,
     state: &mut ScanState,
 ) -> Result<bool, ScanError> {
@@ -444,23 +726,47 @@ fn scan_wire_file(
             continue;
         }
         let time = normalize_timestamp(record.time.unwrap_or_default());
-        if cutoff.is_some_and(|value| time < value) {
-            continue;
+        match classify_window(time, filter) {
+            RecordWindow::Main => consume_main_record(path, record, time, filter, resolver, state),
+            RecordWindow::Comparison => {
+                consume_comparison_record(path, record, time, filter, resolver, state)
+            }
+            RecordWindow::Skip => {}
         }
-        consume_record(path, record, time, resolver, state);
     }
     Ok(false)
 }
 
-fn consume_record(
+fn record_scope(record: &WireUsageRecord) -> String {
+    record
+        .usage_scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(UNSPECIFIED_SCOPE)
+        .to_string()
+}
+
+fn consume_main_record(
     path: &Path,
     record: WireUsageRecord,
     time: i64,
+    filter: &ResolvedFilter,
     resolver: &mut ModelResolver,
     state: &mut ScanState,
 ) {
     let (model, alias) = resolver.resolve(&record.model, time, path);
     let price = pricing::find(&model);
+    let (session_id, agent) = session_identity(path);
+    let scope = record_scope(&record);
+
+    if state.dimensions.add(&model, &session_id, &agent, &scope) {
+        state.limits_reached = true;
+    }
+    if !filter.matches(&model, &session_id, &agent, &scope, price.is_some()) {
+        return;
+    }
+
     let cost_nanos = price.map(|price| {
         price.calculate_nanos(
             record.usage.input_other,
@@ -469,19 +775,22 @@ fn consume_record(
             record.usage.input_cache_creation,
         )
     });
-    let (session_id, agent) = session_identity(path);
-    let date = local_date(time);
+    if let Some(price) = price {
+        let segments = price.calculate_segments_nanos(
+            record.usage.input_other,
+            record.usage.output,
+            record.usage.input_cache_read,
+            record.usage.input_cache_creation,
+        );
+        for (index, segment) in segments.iter().enumerate() {
+            state.cost_segments[index] = state.cost_segments[index].saturating_add(*segment);
+        }
+    }
 
     state.aggregate.add(&record.usage, cost_nanos);
-    if state.daily.contains_key(&date) || state.daily.len() < MAX_DAILY_BUCKETS {
-        state
-            .daily
-            .entry(date)
-            .or_default()
-            .add(&record.usage, cost_nanos);
-    } else {
-        state.limits_reached = true;
-    }
+    state.min_time = Some(state.min_time.map_or(time, |value| value.min(time)));
+    state.max_time = Some(state.max_time.map_or(time, |value| value.max(time)));
+    insert_series_bucket(state, time, &record.usage, cost_nanos);
     let model_bucket =
         if state.models.contains_key(&model) || state.models.len() < MAX_MODEL_BUCKETS {
             model.clone()
@@ -504,6 +813,7 @@ fn consume_record(
         model,
         session_id,
         agent,
+        scope,
         tokens: record.usage.as_totals(),
         cost_cny: cost_nanos.map(pricing::format_cny_nanos),
     });
@@ -515,10 +825,66 @@ fn consume_record(
     }
 }
 
+fn consume_comparison_record(
+    path: &Path,
+    record: WireUsageRecord,
+    time: i64,
+    filter: &ResolvedFilter,
+    resolver: &mut ModelResolver,
+    state: &mut ScanState,
+) {
+    let (model, _) = resolver.resolve(&record.model, time, path);
+    let price = pricing::find(&model);
+    let (session_id, agent) = session_identity(path);
+    let scope = record_scope(&record);
+    if !filter.matches(&model, &session_id, &agent, &scope, price.is_some()) {
+        return;
+    }
+    let cost_nanos = price.map(|price| {
+        price.calculate_nanos(
+            record.usage.input_other,
+            record.usage.output,
+            record.usage.input_cache_read,
+            record.usage.input_cache_creation,
+        )
+    });
+    state.comparison.aggregate.add(&record.usage, cost_nanos);
+    state.comparison.sessions.insert(session_id);
+}
+
+fn insert_series_bucket(
+    state: &mut ScanState,
+    time: i64,
+    usage: &RawTokenUsage,
+    cost_nanos: Option<i128>,
+) {
+    let key = bucket_start(time, state.series_granularity);
+    state.series.entry(key).or_default().add(usage, cost_nanos);
+    while state.series.len() > MAX_SERIES_BUCKETS {
+        let Some(coarser) = state.series_granularity.coarser() else {
+            state.limits_reached = true;
+            break;
+        };
+        rekey_series(&mut state.series, coarser);
+        state.series_granularity = coarser;
+    }
+}
+
+fn rekey_series(series: &mut BTreeMap<i64, Aggregate>, granularity: Granularity) {
+    let previous = std::mem::take(series);
+    for (key, aggregate) in previous {
+        let key = bucket_start(key, granularity);
+        series
+            .entry(key)
+            .and_modify(|existing| existing.merge(&aggregate))
+            .or_insert(aggregate);
+    }
+}
+
 fn build_report(
     home: PathBuf,
     now: i64,
-    range_days: Option<u32>,
+    filter: &ResolvedFilter,
     scanned_files: usize,
     mut state: ScanState,
 ) -> UsageReport {
@@ -526,19 +892,56 @@ fn build_report(
         .recent
         .sort_unstable_by_key(|record| std::cmp::Reverse(record.time));
 
-    let mut daily = state
-        .daily
+    if state.auto_granularity {
+        let start = filter.start_ms.or(state.min_time);
+        let end = filter.end_ms.or(state.max_time);
+        if let (Some(start), Some(end)) = (start, end) {
+            let desired = auto_granularity(end.saturating_sub(start));
+            while state.series_granularity < desired {
+                let Some(coarser) = state.series_granularity.coarser() else {
+                    break;
+                };
+                rekey_series(&mut state.series, coarser);
+                state.series_granularity = coarser;
+            }
+        }
+    }
+
+    let series = state
+        .series
         .into_iter()
-        .map(|(date, aggregate)| DailyUsage {
-            date,
+        .map(|(start_ms, aggregate)| SeriesBucket {
+            start_ms,
             requests: aggregate.requests,
             tokens: aggregate.totals,
             cost_cny: pricing::format_cny_nanos(aggregate.cost_nanos),
         })
         .collect::<Vec<_>>();
-    if daily.len() > MAX_CHART_DAYS {
-        daily.drain(0..daily.len() - MAX_CHART_DAYS);
-    }
+
+    let dimensions = FilterDimensions {
+        models: dimension_values(state.dimensions.models),
+        sessions: dimension_values(state.dimensions.sessions),
+        agents: dimension_values(state.dimensions.agents),
+        scopes: dimension_values(state.dimensions.scopes),
+    };
+
+    let comparison = filter.comparison_window().map(|_| {
+        let aggregate = state.comparison.aggregate;
+        ComparisonSummary {
+            requests: aggregate.requests,
+            sessions: state.comparison.sessions.len() as u64,
+            cache_hit_rate: cache_hit_rate(&aggregate.totals),
+            priced_cost_cny: pricing::format_cny_nanos(aggregate.cost_nanos),
+            tokens: aggregate.totals,
+        }
+    });
+
+    let cost_segments = CostSegments {
+        input_other: pricing::format_cny_nanos(state.cost_segments[0]),
+        cache_read: pricing::format_cny_nanos(state.cost_segments[2]),
+        cache_creation: pricing::format_cny_nanos(state.cost_segments[3]),
+        output: pricing::format_cny_nanos(state.cost_segments[1]),
+    };
 
     let mut models = state
         .models
@@ -569,7 +972,7 @@ fn build_report(
     UsageReport {
         home: home.to_string_lossy().into_owned(),
         generated_at: now,
-        range_days,
+        granularity: state.series_granularity.as_str().to_string(),
         requests: state.aggregate.requests,
         sessions: state.sessions.len() as u64,
         scanned_files: scanned_files as u64,
@@ -585,10 +988,26 @@ fn build_report(
         cache_hit_rate,
         priced_cost_cny: pricing::format_cny_nanos(state.aggregate.cost_nanos),
         tokens: state.aggregate.totals,
-        daily,
+        cost_segments,
+        series,
+        dimensions,
+        comparison,
         models,
         recent: state.recent,
     }
+}
+
+fn dimension_values(map: BTreeMap<String, u64>) -> Vec<DimensionValue> {
+    let mut values = map
+        .into_iter()
+        .map(|(value, requests)| DimensionValue { value, requests })
+        .collect::<Vec<_>>();
+    values.sort_unstable_by(|a, b| {
+        b.requests
+            .cmp(&a.requests)
+            .then_with(|| a.value.cmp(&b.value))
+    });
+    values
 }
 
 fn read_bounded_config(path: &Path) -> Option<KimiConfig> {
@@ -758,28 +1177,60 @@ fn normalize_timestamp(value: i64) -> i64 {
     }
 }
 
-fn cutoff_for_range(now: i64, range_days: Option<u32>) -> Option<i64> {
-    match range_days {
-        Some(1) => Local
-            .timestamp_millis_opt(now)
-            .single()?
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .and_then(|start| Local.from_local_datetime(&start).earliest())
-            .map(|start| start.timestamp_millis()),
-        Some(days) => {
-            Some(now.saturating_sub(i64::from(days).saturating_mul(24 * 60 * 60 * 1_000)))
-        }
-        None => None,
+fn auto_granularity(span_ms: i64) -> Granularity {
+    const HOUR_MS: i64 = 3_600_000;
+    const DAY_MS: i64 = 86_400_000;
+    if span_ms <= 6 * HOUR_MS {
+        Granularity::Minute
+    } else if span_ms <= 72 * HOUR_MS {
+        Granularity::Hour
+    } else if span_ms <= 120 * DAY_MS {
+        Granularity::Day
+    } else if span_ms <= 730 * DAY_MS {
+        Granularity::Week
+    } else {
+        Granularity::Month
     }
 }
 
-fn local_date(time: i64) -> String {
-    Local
-        .timestamp_millis_opt(time)
-        .single()
-        .map(|value| value.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+fn local_midnight(date: chrono::NaiveDate) -> Option<i64> {
+    date.and_hms_opt(0, 0, 0)
+        .and_then(|start| Local.from_local_datetime(&start).earliest())
+        .map(|start| start.timestamp_millis())
+}
+
+fn bucket_start(time: i64, granularity: Granularity) -> i64 {
+    let Some(moment) = Local.timestamp_millis_opt(time).single() else {
+        return time;
+    };
+    match granularity {
+        Granularity::Minute => moment
+            .with_second(0)
+            .and_then(|value| value.with_nanosecond(0))
+            .map(|value| value.timestamp_millis())
+            .unwrap_or(time),
+        Granularity::Hour => moment
+            .with_minute(0)
+            .and_then(|value| value.with_second(0))
+            .and_then(|value| value.with_nanosecond(0))
+            .map(|value| value.timestamp_millis())
+            .unwrap_or(time),
+        Granularity::Day => local_midnight(moment.date_naive()).unwrap_or(time),
+        Granularity::Week => {
+            let date = moment.date_naive();
+            let monday = date
+                .checked_sub_days(chrono::Days::new(u64::from(
+                    date.weekday().num_days_from_monday(),
+                )))
+                .unwrap_or(date);
+            local_midnight(monday).unwrap_or(time)
+        }
+        Granularity::Month => {
+            let date = moment.date_naive();
+            let first = date.with_day(1).unwrap_or(date);
+            local_midnight(first).unwrap_or(time)
+        }
+    }
 }
 
 fn session_identity(path: &Path) -> (String, String) {
@@ -1027,16 +1478,411 @@ max_context_size = 1048576
         assert_eq!(output, b"small");
     }
 
-    #[test]
-    fn today_range_starts_at_local_midnight() {
-        let now = Local::now();
-        let cutoff = cutoff_for_range(now.timestamp_millis(), Some(1)).expect("today cutoff");
-        let cutoff = Local
-            .timestamp_millis_opt(cutoff)
-            .single()
-            .expect("local cutoff");
+    fn write_records(home: &Path, session: &str, records: &[(&str, i64, Option<&str>, [u64; 4])]) {
+        let agent = home.join(format!("sessions/wd_demo/{session}/agents/main"));
+        fs::create_dir_all(&agent).expect("agent directory");
+        let mut wire = File::create(agent.join("wire.jsonl")).expect("wire file");
+        for (model, time, scope, usage) in records {
+            let mut record = serde_json::json!({
+                "type": "usage.record",
+                "model": model,
+                "usage": {
+                    "inputOther": usage[0],
+                    "output": usage[1],
+                    "inputCacheRead": usage[2],
+                    "inputCacheCreation": usage[3]
+                },
+                "time": time
+            });
+            if let Some(scope) = scope {
+                record["usageScope"] = serde_json::json!(scope);
+            }
+            writeln!(wire, "{record}").expect("usage record");
+        }
+    }
 
-        assert_eq!(cutoff.date_naive(), now.date_naive());
-        assert_eq!(cutoff.format("%H:%M:%S").to_string(), "00:00:00");
+    #[test]
+    fn time_range_filter_includes_closed_bounds() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let base = 1_784_500_000_000i64;
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[
+                ("kimi-k3", base + 999, Some("turn"), [100, 20, 80, 0]),
+                ("kimi-k3", base + 1_000, Some("turn"), [100, 20, 80, 0]),
+                ("kimi-k3", base + 2_000, Some("turn"), [100, 20, 80, 0]),
+                ("kimi-k3", base + 2_001, Some("turn"), [100, 20, 80, 0]),
+            ],
+        );
+
+        let filter = ScanFilter {
+            start_ms: Some(base + 1_000),
+            end_ms: Some(base + 2_000),
+            ..ScanFilter::default()
+        };
+        let report = scan(temporary.path().to_str(), Some(filter)).expect("usage report");
+        assert_eq!(report.requests, 2);
+        assert_eq!(report.tokens.total, 400);
+        // base + 999 落在等长上一周期窗口内，只计入 comparison。
+        let comparison = report.comparison.expect("comparison summary");
+        assert_eq!(comparison.requests, 1);
+    }
+
+    #[test]
+    fn bucket_start_aligns_to_local_boundaries() {
+        let time = 1_784_500_123_456i64;
+
+        let minute = bucket_start(time, Granularity::Minute);
+        assert!(minute <= time && time - minute < 60_000);
+        assert_eq!(minute % 60_000, 0);
+
+        let hour = bucket_start(time, Granularity::Hour);
+        let hour_local = Local.timestamp_millis_opt(hour).single().expect("hour");
+        assert_eq!(hour_local.minute(), 0);
+        assert_eq!(hour_local.second(), 0);
+        assert!(hour <= time && time - hour < 3_600_000);
+
+        let day = bucket_start(time, Granularity::Day);
+        let day_local = Local.timestamp_millis_opt(day).single().expect("day");
+        assert_eq!(day_local.format("%H:%M:%S").to_string(), "00:00:00");
+        assert!(day <= time && time - day < 2 * 86_400_000);
+
+        let week = bucket_start(time, Granularity::Week);
+        let week_local = Local.timestamp_millis_opt(week).single().expect("week");
+        assert_eq!(week_local.weekday(), chrono::Weekday::Mon);
+        assert_eq!(week_local.format("%H:%M:%S").to_string(), "00:00:00");
+        assert!(week <= time && time - week < 8 * 86_400_000);
+
+        let month = bucket_start(time, Granularity::Month);
+        let month_local = Local.timestamp_millis_opt(month).single().expect("month");
+        assert_eq!(month_local.day(), 1);
+        assert_eq!(month_local.format("%H:%M:%S").to_string(), "00:00:00");
+        assert!(month <= time && time - month < 32 * 86_400_000);
+
+        for granularity in [
+            Granularity::Minute,
+            Granularity::Hour,
+            Granularity::Day,
+            Granularity::Week,
+            Granularity::Month,
+        ] {
+            let bucket = bucket_start(time, granularity);
+            assert_eq!(bucket_start(bucket, granularity), bucket);
+        }
+    }
+
+    #[test]
+    fn auto_granularity_selects_by_span() {
+        const HOUR: i64 = 3_600_000;
+        const DAY: i64 = 86_400_000;
+        assert_eq!(auto_granularity(0), Granularity::Minute);
+        assert_eq!(auto_granularity(6 * HOUR), Granularity::Minute);
+        assert_eq!(auto_granularity(6 * HOUR + 1), Granularity::Hour);
+        assert_eq!(auto_granularity(72 * HOUR), Granularity::Hour);
+        assert_eq!(auto_granularity(72 * HOUR + 1), Granularity::Day);
+        assert_eq!(auto_granularity(120 * DAY), Granularity::Day);
+        assert_eq!(auto_granularity(120 * DAY + 1), Granularity::Week);
+        assert_eq!(auto_granularity(730 * DAY), Granularity::Week);
+        assert_eq!(auto_granularity(730 * DAY + 1), Granularity::Month);
+    }
+
+    #[test]
+    fn auto_granularity_is_reported_from_filter_span() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let base = 1_784_500_000_000i64;
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[("kimi-k3", base, Some("turn"), [100, 20, 80, 0])],
+        );
+
+        let report = scan(
+            temporary.path().to_str(),
+            Some(ScanFilter {
+                start_ms: Some(base - 7_200_000),
+                end_ms: Some(base),
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+        assert_eq!(report.granularity, "minute");
+
+        let report = scan(
+            temporary.path().to_str(),
+            Some(ScanFilter {
+                start_ms: Some(base - 10 * 86_400_000),
+                end_ms: Some(base),
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+        assert_eq!(report.granularity, "day");
+    }
+
+    #[test]
+    fn series_buckets_follow_requested_granularity() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let hour_start = bucket_start(1_784_500_000_000, Granularity::Hour);
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[
+                ("kimi-k3", hour_start, Some("turn"), [100, 20, 80, 0]),
+                (
+                    "kimi-k3",
+                    hour_start + 60_000,
+                    Some("turn"),
+                    [100, 20, 80, 0],
+                ),
+            ],
+        );
+        let home = temporary.path().to_str();
+
+        let scan_with = |granularity: &str| {
+            scan(
+                home,
+                Some(ScanFilter {
+                    granularity: granularity.to_string(),
+                    ..ScanFilter::default()
+                }),
+            )
+            .expect("usage report")
+        };
+
+        let report = scan_with("minute");
+        assert_eq!(report.granularity, "minute");
+        assert_eq!(report.series.len(), 2);
+        assert!(report.series[0].start_ms < report.series[1].start_ms);
+
+        let report = scan_with("hour");
+        assert_eq!(report.series.len(), 1);
+        assert_eq!(report.series[0].start_ms, hour_start);
+        assert_eq!(report.series[0].requests, 2);
+
+        let report = scan_with("day");
+        assert_eq!(report.series.len(), 1);
+        assert_eq!(
+            report.series[0].start_ms,
+            bucket_start(hour_start, Granularity::Day)
+        );
+
+        let report = scan_with("week");
+        assert_eq!(report.series.len(), 1);
+        let week_local = Local
+            .timestamp_millis_opt(report.series[0].start_ms)
+            .single()
+            .expect("week bucket");
+        assert_eq!(week_local.weekday(), chrono::Weekday::Mon);
+
+        let report = scan_with("month");
+        assert_eq!(report.series.len(), 1);
+        let month_local = Local
+            .timestamp_millis_opt(report.series[0].start_ms)
+            .single()
+            .expect("month bucket");
+        assert_eq!(month_local.day(), 1);
+    }
+
+    #[test]
+    fn series_granularity_upgrades_when_buckets_exceed_cap() {
+        let mut state = ScanState::default();
+        let usage = RawTokenUsage {
+            input_other: 1,
+            output: 0,
+            input_cache_read: 0,
+            input_cache_creation: 0,
+        };
+        let total = MAX_SERIES_BUCKETS as i64 + 10;
+        for index in 0..total {
+            insert_series_bucket(&mut state, 1_784_500_000_000 + index * 60_000, &usage, None);
+        }
+        assert_eq!(state.series_granularity, Granularity::Hour);
+        assert!(state.series.len() <= MAX_SERIES_BUCKETS);
+        assert_eq!(
+            state
+                .series
+                .values()
+                .map(|aggregate| aggregate.requests)
+                .sum::<u64>(),
+            total as u64
+        );
+    }
+
+    #[test]
+    fn comparison_summarizes_previous_window_only() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let start = 1_784_500_001_000i64;
+        let end = start + 999;
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[
+                ("kimi-k3", start, Some("turn"), [100, 20, 80, 0]),
+                ("kimi-k3", start - 1, Some("turn"), [200, 40, 160, 0]),
+                ("kimi-k3", start - 1_001, Some("turn"), [400, 0, 0, 0]),
+            ],
+        );
+
+        let report = scan(
+            temporary.path().to_str(),
+            Some(ScanFilter {
+                start_ms: Some(start),
+                end_ms: Some(end),
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+
+        assert_eq!(report.requests, 1);
+        assert_eq!(report.tokens.input_other, 100);
+        assert_eq!(report.recent.len(), 1);
+        assert_eq!(
+            report
+                .dimensions
+                .models
+                .iter()
+                .map(|value| value.requests)
+                .sum::<u64>(),
+            1
+        );
+
+        let comparison = report.comparison.expect("comparison summary");
+        assert_eq!(comparison.requests, 1);
+        assert_eq!(comparison.sessions, 1);
+        assert_eq!(comparison.tokens.input_other, 200);
+        assert_eq!(comparison.tokens.input_cache_read, 160);
+        assert!((comparison.cache_hit_rate - 160.0 / 360.0).abs() < 1e-9);
+        let expected_cost = pricing::format_cny_nanos(
+            pricing::find("kimi-k3")
+                .expect("k3 pricing")
+                .calculate_nanos(200, 40, 160, 0),
+        );
+        assert_eq!(comparison.priced_cost_cny, expected_cost);
+    }
+
+    #[test]
+    fn billing_filter_selects_priced_or_unpriced() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[
+                ("kimi-k3", 1_784_500_000_000, Some("turn"), [100, 20, 80, 0]),
+                (
+                    "kimi-for-coding",
+                    1_784_500_000_000,
+                    Some("turn"),
+                    [100, 20, 80, 0],
+                ),
+            ],
+        );
+        let home = temporary.path().to_str();
+
+        let report = scan(
+            home,
+            Some(ScanFilter {
+                billing: "priced".to_string(),
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+        assert_eq!(report.requests, 1);
+        assert_eq!(report.models.len(), 1);
+        assert_eq!(report.models[0].model, "kimi-k3");
+
+        let report = scan(
+            home,
+            Some(ScanFilter {
+                billing: "unpriced".to_string(),
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+        assert_eq!(report.requests, 1);
+        assert_eq!(report.unpriced_requests, 1);
+        assert_eq!(report.models.len(), 1);
+        assert_eq!(report.models[0].model, "kimi-for-coding");
+    }
+
+    #[test]
+    fn scopes_filter_and_group_unspecified_scope() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[
+                ("kimi-k3", 1_784_500_000_000, Some("turn"), [100, 20, 80, 0]),
+                ("kimi-k3", 1_784_500_000_001, None, [100, 20, 80, 0]),
+            ],
+        );
+        let home = temporary.path().to_str();
+
+        let report = scan(home, None).expect("usage report");
+        assert_eq!(report.requests, 2);
+        let scopes = report
+            .dimensions
+            .scopes
+            .iter()
+            .map(|value| value.value.as_str())
+            .collect::<Vec<_>>();
+        assert!(scopes.contains(&"turn"));
+        assert!(scopes.contains(&UNSPECIFIED_SCOPE));
+        let unscoped = report
+            .recent
+            .iter()
+            .find(|record| record.scope == UNSPECIFIED_SCOPE)
+            .expect("unscoped recent record");
+        assert_eq!(unscoped.time, 1_784_500_000_001);
+
+        let report = scan(
+            home,
+            Some(ScanFilter {
+                scopes: vec!["turn".to_string()],
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+        assert_eq!(report.requests, 1);
+        assert_eq!(report.recent[0].scope, "turn");
+    }
+
+    #[test]
+    fn dimensions_cover_models_beyond_the_model_whitelist() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        write_records(
+            temporary.path(),
+            "session-1",
+            &[
+                ("kimi-k3", 1_784_500_000_000, Some("turn"), [100, 20, 80, 0]),
+                (
+                    "custom-model-x",
+                    1_784_500_000_001,
+                    Some("turn"),
+                    [100, 20, 80, 0],
+                ),
+            ],
+        );
+
+        let report = scan(
+            temporary.path().to_str(),
+            Some(ScanFilter {
+                models: vec!["kimi-k3".to_string()],
+                ..ScanFilter::default()
+            }),
+        )
+        .expect("usage report");
+        assert_eq!(report.requests, 1);
+        assert_eq!(report.models.len(), 1);
+        assert_eq!(report.models[0].model, "kimi-k3");
+
+        let dimension_models = report
+            .dimensions
+            .models
+            .iter()
+            .map(|value| (value.value.as_str(), value.requests))
+            .collect::<Vec<_>>();
+        assert!(dimension_models.contains(&("kimi-k3", 1)));
+        assert!(dimension_models.contains(&("custom-model-x", 1)));
     }
 }

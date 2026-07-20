@@ -1,20 +1,31 @@
-# Changelog
+# 更新日志
 
-## Unreleased
+## 未发布
 
-- Detect Kimi Code data across `KIMI_CODE_HOME`, `HOME`, and `USERPROFILE`, and recover from stale saved paths.
-- Publish a raw Windows `.exe` and a universal macOS `.dmg` to the rolling Edge release after every successful `main` build.
-- Build the Windows release as a desktop GUI executable without an extra console window.
+暂无。
+
+## 0.2.0 - 2026-07-21
+
+- 接入标准 `i18next` 与 `react-i18next` 国际化方案，完整支持简体中文和英文界面。
+- 根据系统语言自动选择界面语言，支持在应用内实时切换并记住用户选择。
+- 日期、数字、金额、图表提示、导出表头及无障碍标签会跟随当前语言显示。
+- 全面重构用量仪表盘，增加高级筛选、筛选方案、明暗主题、趋势粒度与 Token 构成联动。
+- 增加模型统计和最近请求表格的搜索、排序、分页、列配置、详情展开及中英文导出。
+- 扩展时间范围、对比周期、计费状态和多维度筛选，优化大数据量扫描与展示性能。
+- 自动识别 `KIMI_CODE_HOME`、`HOME` 和 `USERPROFILE` 下的数据，并可从失效的已保存路径恢复。
+- 在每次 `main` 构建成功后向 Edge 版本发布 Windows 便携版和 macOS 通用镜像。
+- Windows 版本以桌面 GUI 程序运行，不再额外显示控制台窗口。
+- 增加国际化与报表回归测试，并通过前端构建、Rust 测试、格式与静态检查。
 
 ## 0.1.0 - 2026-07-20
 
-- Add a read-only Kimi Code `usage.record` scanner.
-- Add token, cache, model, trend, and recent-request views.
-- Add first-party Kimi API Platform pricing with source metadata.
-- Resolve common environment model names and custom `config.toml` aliases before pricing.
-- Resolve Kimi Code's `__kimi_env_model__` placeholder from bounded per-session model logs.
-- Show estimated cost for each recent request.
-- Add a local-calendar “Today” range.
-- Bound scanned log lines and model groups so malformed data cannot grow memory indefinitely.
-- Add public contribution, security, issue, CI, and Windows build documentation.
-- Add an Apple Silicon macOS portable build workflow.
+- 增加只读的 Kimi Code `usage.record` 扫描器。
+- 增加 Token、缓存、模型、趋势和最近请求视图。
+- 根据 Kimi API Platform 官方定价及来源元数据估算费用。
+- 在计价前解析常见环境模型名称和自定义 `config.toml` 别名。
+- 从受限的会话日志中解析 Kimi Code 的 `__kimi_env_model__` 占位符。
+- 显示每条最近请求的估算费用。
+- 增加按本地日历计算的“今天”范围。
+- 限制扫描日志行数和模型分组数量，避免异常数据造成内存无限增长。
+- 增加贡献、安全、Issue、CI 和 Windows 构建文档。
+- 增加 Apple Silicon macOS 便携版构建流程。

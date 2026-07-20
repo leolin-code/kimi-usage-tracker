@@ -39,6 +39,21 @@ impl OfficialPricing {
             + i128::from(cache_creation) * self.cache_creation_nanos;
         weighted / TOKENS_PER_PRICE_UNIT
     }
+
+    pub fn calculate_segments_nanos(
+        self,
+        input_other: u64,
+        output: u64,
+        cache_read: u64,
+        cache_creation: u64,
+    ) -> [i128; 4] {
+        [
+            i128::from(input_other) * self.input_nanos / TOKENS_PER_PRICE_UNIT,
+            i128::from(output) * self.output_nanos / TOKENS_PER_PRICE_UNIT,
+            i128::from(cache_read) * self.cache_read_nanos / TOKENS_PER_PRICE_UNIT,
+            i128::from(cache_creation) * self.cache_creation_nanos / TOKENS_PER_PRICE_UNIT,
+        ]
+    }
 }
 
 pub fn find(model: &str) -> Option<OfficialPricing> {

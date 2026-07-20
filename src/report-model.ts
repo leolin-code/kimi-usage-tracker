@@ -1,17 +1,12 @@
 import type { TokenTotals } from "./types.ts";
-
-const compactNumber = new Intl.NumberFormat("zh-CN", {
-  maximumFractionDigits: 1,
-  notation: "compact",
-});
-
-const fullNumber = new Intl.NumberFormat("zh-CN", {
-  maximumFractionDigits: 0,
-});
+import i18n, { currentLocale } from "./i18n.ts";
 
 export function formatTokens(value: number, compact = true): string {
   const safe = Number.isFinite(value) && value > 0 ? value : 0;
-  return compact ? compactNumber.format(safe) : fullNumber.format(safe);
+  return new Intl.NumberFormat(currentLocale(), {
+    maximumFractionDigits: compact ? 1 : 0,
+    notation: compact ? "compact" : "standard",
+  }).format(safe);
 }
 
 export function formatPercent(value: number): string {
@@ -20,11 +15,11 @@ export function formatPercent(value: number): string {
 }
 
 export function formatCny(value: string | null, fractionDigits = 4): string {
-  if (value === null) return "未定价";
+  if (value === null) return i18n.t("common.unpriced");
   const amount = Number.parseFloat(value);
   const precision = Math.max(0, Math.min(fractionDigits, 6));
   if (!Number.isFinite(amount)) return `¥${(0).toFixed(precision)}`;
-  return new Intl.NumberFormat("zh-CN", {
+  return new Intl.NumberFormat(currentLocale(), {
     currency: "CNY",
     maximumFractionDigits: precision,
     minimumFractionDigits: precision,
@@ -34,7 +29,7 @@ export function formatCny(value: string | null, fractionDigits = 4): string {
 
 export function formatDateTime(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "-";
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(currentLocale(), {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
@@ -45,20 +40,30 @@ export function formatDateTime(value: number): string {
 export function tokenSegments(tokens: TokenTotals) {
   const total = Math.max(tokens.total, 1);
   return [
-    { key: "input", label: "普通输入", value: tokens.inputOther, ratio: tokens.inputOther / total },
+    {
+      key: "input",
+      label: i18n.t("metrics.input"),
+      value: tokens.inputOther,
+      ratio: tokens.inputOther / total,
+    },
     {
       key: "cache",
-      label: "缓存读取",
+      label: i18n.t("metrics.cacheRead"),
       value: tokens.inputCacheRead,
       ratio: tokens.inputCacheRead / total,
     },
     {
       key: "cache-write",
-      label: "缓存创建",
+      label: i18n.t("metrics.cacheCreation"),
       value: tokens.inputCacheCreation,
       ratio: tokens.inputCacheCreation / total,
     },
-    { key: "output", label: "输出", value: tokens.output, ratio: tokens.output / total },
+    {
+      key: "output",
+      label: i18n.t("metrics.output"),
+      value: tokens.output,
+      ratio: tokens.output / total,
+    },
   ] as const;
 }
 

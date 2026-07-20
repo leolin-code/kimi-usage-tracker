@@ -16,11 +16,53 @@ export type PricingMetadata = Readonly<{
   verifiedOn: string;
 }>;
 
-export type DailyUsage = Readonly<{
-  date: string;
+export type SeriesBucket = Readonly<{
+  startMs: number;
   requests: number;
   tokens: TokenTotals;
   costCny: string;
+}>;
+
+export type DimensionValue = Readonly<{
+  value: string;
+  requests: number;
+}>;
+
+export type FilterDimensions = Readonly<{
+  models: readonly DimensionValue[];
+  sessions: readonly DimensionValue[];
+  agents: readonly DimensionValue[];
+  scopes: readonly DimensionValue[];
+}>;
+
+export type ComparisonSummary = Readonly<{
+  requests: number;
+  sessions: number;
+  tokens: TokenTotals;
+  cacheHitRate: number;
+  pricedCostCny: string;
+}>;
+
+export type CostSegments = Readonly<{
+  inputOther: string;
+  cacheRead: string;
+  cacheCreation: string;
+  output: string;
+}>;
+
+export type BillingFilter = "all" | "priced" | "unpriced";
+
+export type Granularity = "auto" | "minute" | "hour" | "day" | "week" | "month";
+
+export type ScanFilter = Readonly<{
+  startMs?: number | null;
+  endMs?: number | null;
+  models?: readonly string[];
+  sessions?: readonly string[];
+  agents?: readonly string[];
+  scopes?: readonly string[];
+  billing?: BillingFilter;
+  granularity?: Granularity;
 }>;
 
 export type ModelUsage = Readonly<{
@@ -38,6 +80,7 @@ export type RecentUsage = Readonly<{
   model: string;
   sessionId: string;
   agent: string;
+  scope: string;
   tokens: TokenTotals;
   costCny: string | null;
 }>;
@@ -45,7 +88,7 @@ export type RecentUsage = Readonly<{
 export type UsageReport = Readonly<{
   home: string;
   generatedAt: number;
-  rangeDays: number | null;
+  granularity: string;
   requests: number;
   sessions: number;
   scannedFiles: number;
@@ -58,9 +101,10 @@ export type UsageReport = Readonly<{
   cacheHitRate: number;
   pricedCostCny: string;
   tokens: TokenTotals;
-  daily: readonly DailyUsage[];
+  costSegments: CostSegments;
+  series: readonly SeriesBucket[];
+  dimensions: FilterDimensions;
+  comparison: ComparisonSummary | null;
   models: readonly ModelUsage[];
   recent: readonly RecentUsage[];
 }>;
-
-export type RangeDays = 1 | 7 | 30 | null;

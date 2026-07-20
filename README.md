@@ -17,6 +17,7 @@ Kimi Usage Tracker 读取 Kimi Code 已经写入本机的 `usage.record` 记录�
 - 统计普通输入、模型输出、缓存读取和缓存创建 Token
 - 查看今天、7 天、30 天和全部用量
 - 查看每日趋势、模型统计、缓存命中率和最近请求
+- 支持简体中文和英文界面，可自动识别系统语言或在应用内切换
 - 按官方 Kimi API Platform 价格估算每条请求与模型费用
 - 兼容 `config.toml` 模型别名、`KIMI_MODEL_NAME` 和 `__kimi_env_model__`
 - 自动识别 `KIMI_CODE_HOME`、`~/.kimi-code` 和 Windows 用户目录，也可以手动选择其他数据目录
@@ -84,6 +85,7 @@ Kimi Usage Tracker reads the `usage.record` entries already written by Kimi Code
 - Track uncached input, model output, cache-read, and cache-creation tokens
 - Switch between today, 7 days, 30 days, and all-time usage
 - View daily trends, model totals, cache hit rate, and recent requests
+- Use the Simplified Chinese or English interface, selected automatically or in the app
 - Estimate per-request and per-model costs using official Kimi API Platform prices
 - Resolve `config.toml` aliases, `KIMI_MODEL_NAME`, and `__kimi_env_model__`
 - Discover `KIMI_CODE_HOME`, `~/.kimi-code`, and Windows user directories automatically, or open another data directory

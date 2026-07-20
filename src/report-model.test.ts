@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
+import i18n from "./i18n.ts";
 import { formatCny, formatPercent, tokenSegments } from "./report-model.ts";
+
+beforeAll(async () => {
+  await i18n.changeLanguage("zh-CN");
+});
 
 describe("report model", () => {
   it("keeps token composition cache-normalized", () => {

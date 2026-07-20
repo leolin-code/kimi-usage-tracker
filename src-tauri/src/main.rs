@@ -3,11 +3,14 @@
 mod pricing;
 mod scanner;
 
-use scanner::UsageReport;
+use scanner::{ScanFilter, UsageReport};
 
 #[tauri::command]
-async fn scan_usage(home: Option<String>, days: Option<u32>) -> Result<UsageReport, String> {
-    tauri::async_runtime::spawn_blocking(move || scanner::scan(home.as_deref(), days))
+async fn scan_usage(
+    home: Option<String>,
+    filter: Option<ScanFilter>,
+) -> Result<UsageReport, String> {
+    tauri::async_runtime::spawn_blocking(move || scanner::scan(home.as_deref(), filter))
         .await
         .map_err(|error| format!("Usage scan task failed: {error}"))?
         .map_err(|error| error.to_string())
@@ -20,9 +23,23 @@ fn default_kimi_home() -> Result<String, String> {
         .ok_or_else(|| "Unable to locate the current user home directory".to_string())
 }
 
+#[tauri::command]
+fn export_text(path: String, contents: String) -> Result<(), String> {
+    std::fs::write(&path, contents).map_err(|error| format!("Failed to write export file: {error}"))
+}
+
 fn main() {
     if std::env::args().any(|argument| argument == "--diagnose") {
-        match scanner::scan(None, Some(30)) {
+        let start_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or_default()
+            .saturating_sub(30 * 24 * 60 * 60 * 1_000);
+        let filter = ScanFilter {
+            start_ms: Some(start_ms),
+            ..ScanFilter::default()
+        };
+        match scanner::scan(None, Some(filter)) {
             Ok(report) => {
                 println!(
                     "files={} records={} requests={} sessions={} models={} malformed={} oversized={}",
@@ -45,7 +62,11 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![default_kimi_home, scan_usage])
+        .invoke_handler(tauri::generate_handler![
+            default_kimi_home,
+            export_text,
+            scan_usage
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run Kimi Usage Tracker");
 }
