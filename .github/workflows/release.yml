@@ -46,7 +46,7 @@ jobs:
           dmg="$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -type f -name '*.dmg' -print -quit)"
           test -n "$dmg"
           cp "$dmg" release/Kimi-Usage-Tracker-macOS-universal.dmg
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-release
           path: release/Kimi-Usage-Tracker-macOS-universal.dmg
@@ -76,7 +76,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item src-tauri\target\release\kimi-usage-tracker.exe release\Kimi-Usage-Tracker-Windows-x64.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-release
           path: release/Kimi-Usage-Tracker-Windows-x64.exe
@@ -86,7 +86,7 @@ jobs:
     needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
