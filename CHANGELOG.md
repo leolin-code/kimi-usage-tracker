@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Detect Kimi Code data across `KIMI_CODE_HOME`, `HOME`, and `USERPROFILE`, and recover from stale saved paths.
+- Publish a raw Windows `.exe` and a universal macOS `.dmg` to the rolling Edge release after every successful `main` build.
+
 ## 0.1.0 - 2026-07-20
 
 - Add a read-only Kimi Code `usage.record` scanner.

@@ -19,14 +19,14 @@ Kimi Usage Tracker 读取 Kimi Code 已经写入本机的 `usage.record` 记录�
 - 查看每日趋势、模型统计、缓存命中率和最近请求
 - 按官方 Kimi API Platform 价格估算每条请求与模型费用
 - 兼容 `config.toml` 模型别名、`KIMI_MODEL_NAME` 和 `__kimi_env_model__`
-- 自动读取 `~/.kimi-code`，也可以手动选择其他数据目录
+- 自动识别 `KIMI_CODE_HOME`、`~/.kimi-code` 和 Windows 用户目录，也可以手动选择其他数据目录
 
 ### macOS 使用
 
-首个版本支持 Apple Silicon Mac，要求 macOS 11 或更高版本。
+自动构建版本提供通用 macOS 镜像，同时支持 Apple Silicon 和 Intel Mac，要求 macOS 11 或更高版本。
 
-1. 从 [最新版本](https://github.com/leolin-code/kimi-usage-tracker/releases/latest) 下载 `Kimi-Usage-Tracker-macOS-arm64.zip`。
-2. 解压后打开 `Kimi Usage Tracker.app`。
+1. 从 [Edge 自动构建版本](https://github.com/leolin-code/kimi-usage-tracker/releases/tag/edge) 下载 `Kimi-Usage-Tracker-macOS-universal.dmg`。
+2. 打开 DMG，然后运行 `Kimi Usage Tracker.app`。
 3. 程序会自动读取 `~/.kimi-code` 并显示统计结果。
 
 当前应用使用临时签名，尚未经过 Apple 公证。如果 macOS 阻止首次启动，请按住 Control 点击应用，选择“打开”，然后确认一次。
@@ -35,7 +35,7 @@ Kimi Usage Tracker 读取 Kimi Code 已经写入本机的 `usage.record` 记录�
 
 ### Windows
 
-首个版本暂不提供 Windows 安装包。Windows 10/11 用户可以按照 [Windows 构建教程](docs/build-windows.md) 生成免安装的 `.exe` 文件。
+Windows 10/11 用户可以从 [Edge 自动构建版本](https://github.com/leolin-code/kimi-usage-tracker/releases/tag/edge) 直接下载 `Kimi-Usage-Tracker-Windows-x64.exe`，无需安装。也可以按照 [Windows 构建教程](docs/build-windows.md) 自行构建。
 
 ### 数据与隐私
 
@@ -86,14 +86,14 @@ Kimi Usage Tracker reads the `usage.record` entries already written by Kimi Code
 - View daily trends, model totals, cache hit rate, and recent requests
 - Estimate per-request and per-model costs using official Kimi API Platform prices
 - Resolve `config.toml` aliases, `KIMI_MODEL_NAME`, and `__kimi_env_model__`
-- Discover `~/.kimi-code` automatically or open another data directory
+- Discover `KIMI_CODE_HOME`, `~/.kimi-code`, and Windows user directories automatically, or open another data directory
 
 ### macOS
 
-The first release supports Apple Silicon Macs running macOS 11 or later.
+Automated builds provide a universal macOS image for both Apple Silicon and Intel Macs running macOS 11 or later.
 
-1. Download `Kimi-Usage-Tracker-macOS-arm64.zip` from the [latest release](https://github.com/leolin-code/kimi-usage-tracker/releases/latest).
-2. Extract the archive and open `Kimi Usage Tracker.app`.
+1. Download `Kimi-Usage-Tracker-macOS-universal.dmg` from the [Edge release](https://github.com/leolin-code/kimi-usage-tracker/releases/tag/edge).
+2. Open the DMG, then run `Kimi Usage Tracker.app`.
 3. The dashboard automatically reads `~/.kimi-code`.
 
 The current app uses ad-hoc signing and is not Apple-notarized. If macOS blocks the first launch, Control-click the app, choose **Open**, and confirm once.
@@ -102,7 +102,7 @@ Use the folder button in the top-right corner when your Kimi data is stored else
 
 ### Windows
 
-The first release does not include a prebuilt Windows download. Windows 10/11 users can follow the [Windows build guide](docs/build-windows.md) to produce a portable `.exe` with no installer.
+Windows 10/11 users can download `Kimi-Usage-Tracker-Windows-x64.exe` directly from the [Edge release](https://github.com/leolin-code/kimi-usage-tracker/releases/tag/edge). It requires no installer. The [Windows build guide](docs/build-windows.md) remains available for local builds.
 
 ### Data and privacy
 
