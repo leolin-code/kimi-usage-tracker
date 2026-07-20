@@ -1,0 +1,41 @@
+{
+  "name": "kimi-usage-tracker",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leolin-code/kimi-usage-tracker.git"
+  },
+  "homepage": "https://github.com/leolin-code/kimi-usage-tracker",
+  "bugs": {
+    "url": "https://github.com/leolin-code/kimi-usage-tracker/issues"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "tauri": "tauri",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-dialog": "2.7.2",
+    "lucide-react": "1.25.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@types/node": "24.10.13",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.1",
+    "prettier": "3.8.2",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.0"
+  }
+}
