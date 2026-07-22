@@ -82,6 +82,8 @@ export type RecentUsage = Readonly<{
   agent: string;
   scope: string;
   tokens: TokenTotals;
+  cacheHitRate: number;
+  durationMs: number | null;
   costCny: string | null;
 }>;
 

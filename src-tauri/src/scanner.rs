@@ -29,6 +29,7 @@ const MAX_ENV_MODEL_SESSIONS: usize = 2_048;
 const MAX_ENV_MODEL_EVENTS: usize = 100_000;
 const ENV_MODEL_ALIAS: &str = "__kimi_env_model__";
 const MAX_RECENT_RECORDS: usize = 1_000;
+const MAX_REQUEST_DURATION_MS: i64 = 24 * 60 * 60 * 1_000;
 
 #[derive(Debug)]
 pub enum ScanError {
@@ -156,6 +157,8 @@ pub struct RecentUsage {
     pub agent: String,
     pub scope: String,
     pub tokens: TokenTotals,
+    pub cache_hit_rate: f64,
+    pub duration_ms: Option<u64>,
     pub cost_cny: Option<String>,
 }
 
@@ -222,6 +225,13 @@ struct WireUsageRecord {
     usage: RawTokenUsage,
     #[serde(rename = "usageScope")]
     usage_scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WireEventMetadata {
+    #[serde(rename = "type")]
+    record_type: String,
+    time: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -701,6 +711,7 @@ fn scan_wire_file(
     let file = File::open(path)?;
     let mut reader = BufReader::with_capacity(64 * 1024, file);
     let mut line = Vec::with_capacity(512);
+    let mut pending_request_time = None;
 
     while let Some(oversized) = read_capped_line(&mut reader, &mut line)? {
         if state.scanned_lines >= MAX_SCANNED_LINES {
@@ -710,11 +721,35 @@ fn scan_wire_file(
         state.scanned_lines = state.scanned_lines.saturating_add(1);
         if oversized {
             state.oversized_records = state.oversized_records.saturating_add(1);
+            if contains_bytes(&line, b"llm.request") {
+                pending_request_time = None;
+            }
             continue;
         }
-        if !contains_bytes(&line, b"usage.record") {
+        if !contains_bytes(&line, b"usage.record") && !contains_bytes(&line, b"llm.request") {
             continue;
         }
+        let metadata: WireEventMetadata = match serde_json::from_slice(&line) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                if contains_bytes(&line, b"usage.record") {
+                    pending_request_time = None;
+                    state.malformed_records = state.malformed_records.saturating_add(1);
+                }
+                continue;
+            }
+        };
+        if metadata.record_type == "llm.request" {
+            pending_request_time = metadata
+                .time
+                .filter(|time| *time > 0)
+                .map(normalize_timestamp);
+            continue;
+        }
+        if metadata.record_type != "usage.record" {
+            continue;
+        }
+        let duration_ms = request_duration_ms(pending_request_time.take(), metadata.time);
         let record: WireUsageRecord = match serde_json::from_slice(&line) {
             Ok(record) => record,
             Err(_) => {
@@ -727,7 +762,9 @@ fn scan_wire_file(
         }
         let time = normalize_timestamp(record.time.unwrap_or_default());
         match classify_window(time, filter) {
-            RecordWindow::Main => consume_main_record(path, record, time, filter, resolver, state),
+            RecordWindow::Main => {
+                consume_main_record(path, record, time, duration_ms, filter, resolver, state)
+            }
             RecordWindow::Comparison => {
                 consume_comparison_record(path, record, time, filter, resolver, state)
             }
@@ -751,6 +788,7 @@ fn consume_main_record(
     path: &Path,
     record: WireUsageRecord,
     time: i64,
+    duration_ms: Option<u64>,
     filter: &ResolvedFilter,
     resolver: &mut ModelResolver,
     state: &mut ScanState,
@@ -808,13 +846,16 @@ fn consume_main_record(
     state.sessions.insert(session_id.clone());
     state.parsed_records = state.parsed_records.saturating_add(1);
 
+    let tokens = record.usage.as_totals();
     state.recent.push(RecentUsage {
         time,
         model,
         session_id,
         agent,
         scope,
-        tokens: record.usage.as_totals(),
+        cache_hit_rate: cache_hit_rate(&tokens),
+        duration_ms,
+        tokens,
         cost_cny: cost_nanos.map(pricing::format_cny_nanos),
     });
     if state.recent.len() > MAX_RECENT_RECORDS {
@@ -1107,6 +1148,15 @@ fn cache_hit_rate(totals: &TokenTotals) -> f64 {
     }
 }
 
+fn request_duration_ms(start: Option<i64>, end: Option<i64>) -> Option<u64> {
+    let start = start?;
+    let end = end.filter(|time| *time > 0).map(normalize_timestamp)?;
+    let duration = end.checked_sub(start)?;
+    (0..=MAX_REQUEST_DURATION_MS)
+        .contains(&duration)
+        .then_some(duration as u64)
+}
+
 fn read_capped_line<R: BufRead>(reader: &mut R, output: &mut Vec<u8>) -> io::Result<Option<bool>> {
     output.clear();
     let mut saw_bytes = false;
@@ -1334,6 +1384,71 @@ mod tests {
         assert_eq!(report.tokens.total, 200);
         assert_eq!(report.sessions, 1);
         assert_eq!(report.unpriced_requests, 0);
+        assert!((report.recent[0].cache_hit_rate - (80.0 / 180.0)).abs() < f64::EPSILON);
+        assert_eq!(report.recent[0].duration_ms, None);
+    }
+
+    #[test]
+    fn associates_each_usage_record_with_the_preceding_request() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let agent = temporary
+            .path()
+            .join("sessions/wd_demo/session-1/agents/main");
+        fs::create_dir_all(&agent).expect("agent directory");
+        let mut wire = File::create(agent.join("wire.jsonl")).expect("wire file");
+        writeln!(
+            wire,
+            "{}",
+            serde_json::json!({
+                "type": "llm.request",
+                "time": 1_784_500_000_000i64,
+                "messages": [{"role": "user", "content": "ignored"}]
+            })
+        )
+        .expect("request record");
+        writeln!(
+            wire,
+            "{}",
+            serde_json::json!({
+                "type": "usage.record",
+                "model": "kimi-k3",
+                "usage": {"inputOther": 100, "output": 20, "inputCacheRead": 80, "inputCacheCreation": 20},
+                "usageScope": "turn",
+                "time": 1_784_500_001_500i64
+            })
+        )
+        .expect("usage record");
+        writeln!(
+            wire,
+            "{}",
+            serde_json::json!({
+                "type": "usage.record",
+                "model": "kimi-k3",
+                "usage": {"inputOther": 50, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0},
+                "usageScope": "turn",
+                "time": 1_784_500_002_000i64
+            })
+        )
+        .expect("unpaired usage record");
+
+        let report = scan(temporary.path().to_str(), None).expect("usage report");
+        assert_eq!(report.requests, 2);
+        assert_eq!(report.recent[0].duration_ms, None);
+        assert_eq!(report.recent[1].duration_ms, Some(1_500));
+        assert!((report.recent[1].cache_hit_rate - 0.4).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn rejects_invalid_request_durations() {
+        let base = 1_784_500_000_000i64;
+        assert_eq!(
+            request_duration_ms(Some(base + 2_000), Some(base + 1_000)),
+            None
+        );
+        assert_eq!(
+            request_duration_ms(Some(base), Some(base + MAX_REQUEST_DURATION_MS + 1)),
+            None
+        );
     }
 
     #[test]

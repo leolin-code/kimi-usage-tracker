@@ -1,6 +1,6 @@
 [package]
 name = "kimi-usage-tracker"
-version = "0.2.0"
+version = "0.2.1"
 description = "An unofficial local usage tracker for Kimi Code"
 authors = ["Kimi Usage Tracker contributors"]
 edition = "2024"

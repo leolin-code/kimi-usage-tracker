@@ -433,6 +433,7 @@ export function generateMockReport(home: string, filter: ScanFilter | null): Usa
       const inputCacheRead = Math.floor(point.tokens.inputCacheRead / count / scale);
       const inputCacheCreation = Math.floor(point.tokens.inputCacheCreation / count / scale);
       const output = Math.floor(point.tokens.output / count / scale);
+      const inputTotal = inputOther + inputCacheRead + inputCacheCreation;
       const pricing = MODELS[point.modelIndex].pricing;
       recent.push({
         time: point.startMs + Math.floor(rand() * HOUR_MS),
@@ -447,6 +448,8 @@ export function generateMockReport(home: string, filter: ScanFilter | null): Usa
           inputCacheCreation,
           total: inputOther + output + inputCacheRead + inputCacheCreation,
         },
+        cacheHitRate: inputTotal > 0 ? inputCacheRead / inputTotal : 0,
+        durationMs: 800 + Math.floor(rand() * 179_200),
         costCny: pricing ? (pointCostCny(point) / count).toFixed(6) : null,
       });
     }

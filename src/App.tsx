@@ -9,6 +9,7 @@ import { DashboardSkeleton } from "./components/states/dashboard-skeleton.tsx";
 import { EmptyState } from "./components/states/empty-state.tsx";
 import { ErrorBoundary } from "./components/states/error-boundary.tsx";
 import { ErrorState } from "./components/states/error-state.tsx";
+import { LaunchSplash } from "./components/states/launch-splash.tsx";
 import { ModelTable } from "./components/tables/model-table.tsx";
 import { RecentTable } from "./components/tables/recent-table.tsx";
 import { TooltipProvider } from "./components/ui/tooltip.tsx";
@@ -80,6 +81,7 @@ export default function App() {
     <ThemeProvider>
       <TooltipProvider>
         <DashboardProvider>
+          <LaunchSplash />
           <div className="min-h-full">
             <Topbar />
             <DashboardContent />

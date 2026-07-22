@@ -13,7 +13,13 @@ import { useTranslation } from "react-i18next";
 
 import { currentLocale } from "../../i18n.ts";
 import { cn } from "../../lib/utils.ts";
-import { formatCny, formatTokens, shortModelName } from "../../report-model.ts";
+import {
+  formatCny,
+  formatDuration,
+  formatPercent,
+  formatTokens,
+  shortModelName,
+} from "../../report-model.ts";
 import { useDashboard } from "../../state/dashboard.tsx";
 import type { RecentUsage } from "../../types.ts";
 import { Button } from "../ui/button.tsx";
@@ -78,6 +84,22 @@ export function RecentTable() {
         size: 90,
         cell: (info) => info.getValue(),
       }),
+      helper.accessor("durationMs", {
+        header: t("tables.duration"),
+        size: 85,
+        cell: (info) => <span className="tnum">{formatDuration(info.getValue())}</span>,
+      }),
+      helper.accessor((row) => row.costCny, {
+        id: "cost",
+        header: t("tables.requestCost"),
+        size: 105,
+        cell: (info) =>
+          info.getValue() === null ? (
+            <span className="text-muted-foreground">{t("common.unpriced")}</span>
+          ) : (
+            <span className="tnum text-teal">{formatCny(info.getValue(), 6)}</span>
+          ),
+      }),
       helper.accessor((row) => row.tokens.inputOther, {
         id: "input",
         header: t("tables.input"),
@@ -90,11 +112,10 @@ export function RecentTable() {
         size: 80,
         cell: (info) => <span className="tnum text-green">{formatTokens(info.getValue())}</span>,
       }),
-      helper.accessor((row) => row.tokens.inputCacheCreation, {
-        id: "cacheWrite",
-        header: t("tables.cacheCreation"),
-        size: 80,
-        cell: (info) => <span className="tnum">{formatTokens(info.getValue())}</span>,
+      helper.accessor("cacheHitRate", {
+        header: t("tables.hitRate"),
+        size: 85,
+        cell: (info) => <span className="tnum text-green">{formatPercent(info.getValue())}</span>,
       }),
       helper.accessor((row) => row.tokens.output, {
         id: "output",
@@ -107,17 +128,6 @@ export function RecentTable() {
         header: t("tables.total"),
         size: 90,
         cell: (info) => <span className="tnum font-medium">{formatTokens(info.getValue())}</span>,
-      }),
-      helper.accessor((row) => row.costCny, {
-        id: "cost",
-        header: t("tables.cost"),
-        size: 100,
-        cell: (info) =>
-          info.getValue() === null ? (
-            <span className="text-muted-foreground">{t("common.unpriced")}</span>
-          ) : (
-            <span className="tnum text-teal">{formatCny(info.getValue(), 6)}</span>
-          ),
       }),
     ],
     [t, i18n.resolvedLanguage],

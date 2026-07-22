@@ -14,6 +14,19 @@ export function formatPercent(value: number): string {
   return `${(safe * 100).toFixed(safe >= 0.1 ? 1 : 2)}%`;
 }
 
+export function formatDuration(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return "—";
+  if (value < 1_000) return `${Math.round(value)} ms`;
+  if (value < 60_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)} s`;
+
+  const totalSeconds = Math.round(value / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${seconds}s`;
+}
+
 export function formatCny(value: string | null, fractionDigits = 4): string {
   if (value === null) return i18n.t("common.unpriced");
   const amount = Number.parseFloat(value);

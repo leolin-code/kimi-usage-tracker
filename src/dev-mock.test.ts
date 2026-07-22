@@ -13,6 +13,16 @@ describe("dev-mock 合成报表", () => {
     expect(report.models.length).toBeGreaterThan(0);
     expect(report.recent.length).toBeGreaterThan(0);
     expect(report.recent.length).toBeLessThanOrEqual(1000);
+    expect(
+      report.recent.every((record) => record.cacheHitRate >= 0 && record.cacheHitRate <= 1),
+    ).toBe(true);
+    expect(
+      report.recent.every(
+        (record) =>
+          record.durationMs === null ||
+          (Number.isFinite(record.durationMs) && record.durationMs >= 0),
+      ),
+    ).toBe(true);
     expect(report.dimensions.models.length).toBe(report.models.length);
     expect(report.comparison).toBeNull(); // 全部时间无对比周期
     // Token 总量自洽

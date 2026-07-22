@@ -193,6 +193,107 @@ body {
   animation: kut-spin 0.9s linear infinite;
 }
 
+/* 启动层：首轮扫描期间提供稳定的品牌反馈，随后让出现有加载状态。 */
+.launch-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--background);
+  color: var(--foreground);
+  opacity: 1;
+  transition:
+    opacity 280ms ease,
+    visibility 280ms ease;
+}
+
+.launch-splash[data-exiting] {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.launch-splash__logo {
+  width: 88px;
+  height: 88px;
+  border-radius: 19px;
+  box-shadow: 0 10px 32px rgb(16 24 40 / 0.16);
+  animation: kut-launch-logo 520ms ease-out both;
+}
+
+.launch-splash__name {
+  margin-top: 18px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.launch-splash__activity {
+  display: flex;
+  align-items: end;
+  gap: 4px;
+  width: 24px;
+  height: 16px;
+  margin-top: 16px;
+}
+
+.launch-splash__activity i {
+  display: block;
+  width: 5px;
+  border-radius: 2px;
+  background: var(--green);
+  animation: kut-launch-bars 900ms ease-in-out infinite alternate;
+}
+
+.launch-splash__activity i:nth-child(1) {
+  height: 7px;
+}
+
+.launch-splash__activity i:nth-child(2) {
+  height: 11px;
+  animation-delay: 120ms;
+  background: var(--orange);
+}
+
+.launch-splash__activity i:nth-child(3) {
+  height: 16px;
+  animation-delay: 240ms;
+  background: var(--red);
+}
+
+@keyframes kut-launch-logo {
+  from {
+    transform: translateY(6px) scale(0.94);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes kut-launch-bars {
+  from {
+    transform: scaleY(0.55);
+    opacity: 0.55;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .launch-splash,
+  .launch-splash__logo,
+  .launch-splash__activity i {
+    animation: none;
+    transition-duration: 1ms;
+  }
+}
+
 /* 骨架屏 */
 @keyframes kut-shimmer {
   0% {
